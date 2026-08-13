@@ -31,7 +31,7 @@ def feedmeter_count():
         feedmeter -= 1
         time.sleep(1)
 
-threading.Thread(target=feedmeter_count).start()
+threading.Thread(target=feedmeter_count, daemon=True).start()
 
 def intromenu():
     global fc
@@ -78,10 +78,21 @@ def secndc():
     if not path:
         print("No path provided.")
         return
-    path = os.path.expanduser(path)
+    # Strip surrounding quotes, e.g. "main.py" or 'main.py'
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in ('"', "'"):
+        path = path[1:-1]
+    path = os.path.expanduser(os.path.expandvars(path))
     if not os.path.isfile(path):
-        print("File not found.")
-        return
+        # Fall back to resolving relative to this script's folder
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        alt = os.path.join(script_dir, path)
+        if os.path.isfile(alt):
+            path = alt
+        else:
+            print(f"File not found: {path}")
+            print(f"  Tried absolute: {os.path.abspath(path)}")
+            print(f"  Tried script dir: {alt}")
+            return
 
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
@@ -190,6 +201,10 @@ def fifthc():
     global feedmeter
     global pettype
     global petname
+    if not os.path.isfile("save.pkl"):
+        print("Não existe nenhum save file. Crie um pet primeiro e salve o progresso!")
+        time.sleep(1.5)
+        return
     with open("save.pkl", "rb") as box:
         data = pickle.load(box)
         pettype = data["pettype"]
