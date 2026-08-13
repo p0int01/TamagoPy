@@ -3,6 +3,7 @@ import time
 import random
 import pickle
 import threading
+import ast
 
 fc = 0
 feedmeter = 100
@@ -79,103 +80,88 @@ def secndc():
         return
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
-        func_defs = {}  # name -> set(linenos)
-        assigned = {}   # name -> set(linenos)
-        used = {}       # name -> set(linenos)
-        called = {}     # name -> set(linenos)
+        print("File not found.")
+        return
 
-        class Analyzer(ast.NodeVisitor):
-            def visit_FunctionDef(self, node):
-                func_defs.setdefault(node.name, set()).add(node.lineno)
-                self.generic_visit(node)
+    with open(path, "r", encoding="utf-8") as f:
+        src = f.read()
 
-            def visit_Call(self, node):
-                fn = node.func
-                if isinstance(fn, ast.Name):
-                    called.setdefault(fn.id, set()).add(node.lineno)
-                    used.setdefault(fn.id, set()).add(node.lineno)
-                elif isinstance(fn, ast.Attribute):
-                    called.setdefault(fn.attr, set()).add(node.lineno)
-                    used.setdefault(fn.attr, set()).add(node.lineno)
-                self.generic_visit(node)
+    try:
+        tree = ast.parse(src, filename=path)
+    except SyntaxError as e:
+        print("Syntax error parsing file:", e)
+        return
 
-            def visit_Assign(self, node):
-                for target in node.targets:
-                    for n in self._names_in_target(target):
-                        assigned.setdefault(n, set()).add(node.lineno)
-                self.generic_visit(node)
+    func_defs = {}  # name -> set(linenos)
+    assigned = {}   # name -> set(linenos)
+    used = {}       # name -> set(linenos)
+    called = {}     # name -> set(linenos)
 
-            def visit_AugAssign(self, node):
-                for n in self._names_in_target(node.target):
+    class Analyzer(ast.NodeVisitor):
+        def visit_FunctionDef(self, node):
+            func_defs.setdefault(node.name, set()).add(node.lineno)
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            fn = node.func
+            if isinstance(fn, ast.Name):
+                called.setdefault(fn.id, set()).add(node.lineno)
+                used.setdefault(fn.id, set()).add(node.lineno)
+            elif isinstance(fn, ast.Attribute):
+                called.setdefault(fn.attr, set()).add(node.lineno)
+                used.setdefault(fn.attr, set()).add(node.lineno)
+            self.generic_visit(node)
+
+        def visit_Assign(self, node):
+            for target in node.targets:
+                for n in self._names_in_target(target):
                     assigned.setdefault(n, set()).add(node.lineno)
-                self.generic_visit(node)
+            self.generic_visit(node)
 
-            def visit_Name(self, node):
-                if isinstance(node.ctx, ast.Load):
-                    used.setdefault(node.id, set()).add(node.lineno)
-                self.generic_visit(node)
+        def visit_AugAssign(self, node):
+            for n in self._names_in_target(node.target):
+                assigned.setdefault(n, set()).add(node.lineno)
+            self.generic_visit(node)
 
-            def _names_in_target(self, node):
-                names = set()
-                if isinstance(node, ast.Name):
-                    names.add(node.id)
-                elif isinstance(node, (ast.Tuple, ast.List)):
-                    for elt in node.elts:
-                        names |= self._names_in_target(elt)
-                elif isinstance(node, ast.Attribute):
-                    names.add(node.attr)
-                return names
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Load):
+                used.setdefault(node.id, set()).add(node.lineno)
+            self.generic_visit(node)
 
-        Analyzer().visit(tree)
-
-        # compute unused variables and unused functions with line numbers
-        unused_vars = [(n, sorted(lines)) for n, lines in assigned.items() if n not in used and not n.startswith("__")]
-        unused_funcs = [(n, sorted(lines)) for n, lines in func_defs.items() if n not in called and not n.startswith("__")]
-
-        print("\nAnalysis report for:", path)
-        if unused_funcs:
-            print("Functions defined but never called:")
-            for f, lines in unused_funcs:
-                print(f" - {f} (defined at line {lines[0]})")
-        else:
-            print("No unused function definitions found.")
-
-        if unused_vars:
-            print("\nVariables assigned but never used:")
-            for v, lines in unused_vars:
-                print(f" - {v} (assigned at line(s) {', '.join(map(str, lines))})")
-        else:
-            print("No unused variables found.")
-
-        # quick summary of calls and defs
-        print(f"\nSummary: {len(func_defs)} function(s) defined, {sum(len(s) for s in called.values())} call(s) detected, {len(unused_vars)} unused var(s)")
-    names.add(node.attr)
-    return names
+        def _names_in_target(self, node):
+            names = set()
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for elt in node.elts:
+                    names |= self._names_in_target(elt)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            return names
 
     Analyzer().visit(tree)
 
-    # compute unused variables and unused functions
-    # filter out dunders and common builtin names
-    unused_vars = sorted(n for n in (assigned - used) if not n.startswith("__"))
-    unused_funcs = sorted(n for n in (func_defs - called) if not n.startswith("__"))
+    # compute unused variables and unused functions with line numbers
+    unused_vars = [(n, sorted(lines)) for n, lines in assigned.items() if n not in used and not n.startswith("__")]
+    unused_funcs = [(n, sorted(lines)) for n, lines in func_defs.items() if n not in called and not n.startswith("__")]
 
     print("\nAnalysis report for:", path)
     if unused_funcs:
-        print(f"{petname} found unused function definitions:")
-        for f in unused_funcs:
-            print(" -", f)
+        print("Functions defined but never called:")
+        for f, lines in unused_funcs:
+            print(f" - {f} (defined at line {lines[0]})")
     else:
-        print(f"{petname} found no unused function definitions.")
+        print("No unused function definitions found.")
 
     if unused_vars:
-        print(f"{petname}\nVariables assigned but never used:")
-        for v in unused_vars:
-            print(" -", v)
+        print("\nVariables assigned but never used:")
+        for v, lines in unused_vars:
+            print(f" - {v} (assigned at line(s) {', '.join(map(str, lines))})")
     else:
-        print(f"{petname} found no unused variables.")
+        print("No unused variables found.")
 
     # quick summary of calls and defs
-    print(f"\nSummary: {len(func_defs)} function(s) defined, {len(called)} call(s) detected, {len(unused_vars)} unused var(s)")
+    print(f"\nSummary: {len(func_defs)} function(s) defined, {sum(len(s) for s in called.values())} call(s) detected, {len(unused_vars)} unused var(s)")
     time.sleep(1.5)
 
 def thrdc():
